@@ -39,10 +39,6 @@ logger.addHandler(handler)
 
 def check_tokens():
     """Проверяет доступность обязательных переменных окружения."""
-    vk_token = os.getenv('VK_TOKEN')
-    practicum_token = os.getenv('PRACTICUM_TOKEN')
-    vk_user_id = os.getenv('VK_USER_ID')
-
     if (
         VK_TOKEN is not None
         and PRACTICUM_TOKEN is not None
@@ -150,3 +146,7 @@ def main():
             logger.error(f'Сбой в работе программы: {error}')
 
         time.sleep(RETRY_PERIOD)
+
+
+if __name__ == '__main__':
+    main()
