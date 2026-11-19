@@ -17,6 +17,10 @@ VK_USER_ID = os.getenv('VK_USER_ID')
 RETRY_PERIOD = 600
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 
+HEADERS = {
+    'Authorization': f'OAuth {PRACTICUM_TOKEN}'
+}
+
 HOMEWORK_VERDICTS = {
     'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
     'reviewing': 'Работа взята на проверку ревьюером.',
@@ -40,10 +44,10 @@ def check_tokens():
     vk_user_id = os.getenv('VK_USER_ID')
 
     if (
-        vk_token is not None
-        and practicum_token is not None
-        and practicum_token.strip()
-        and vk_user_id is not None
+        VK_TOKEN is not None
+        and PRACTICUM_TOKEN is not None
+        and PRACTICUM_TOKEN.strip()
+        and VK_USER_ID is not None
     ):
         return True
     else:
@@ -69,117 +73,80 @@ def send_message(vk, message):
 
 def get_api_answer(timestamp):
     """Запрашивает статусы домашних работ у API Практикум Домашка."""
-    headers = {'Authorization': f'Bearer {PRACTICUM_TOKEN}'}
     params = {'from_date': timestamp}
-
     try:
         response = requests.get(
             ENDPOINT,
-            headers=headers,
+            headers=HEADERS,
             params=params,
-            timeout=5,
+            timeout=5
         )
         if response.status_code != 200:
-            logger.error(
-                f'Недоступность эндпоинта: {ENDPOINT}. '
-                f'Код ответа API: {response.status_code}'
+            raise requests.exceptions.HTTPError(
+                f'Эндпоинт {ENDPOINT} недоступен. '
+                f'Код ответа: {response.status_code}'
             )
-            return None
-
         return response.json()
     except requests.exceptions.RequestException as error:
         logger.error(f'Сбой при запросе к API: {error}')
-        return None
+        raise ConnectionError('Ошибка при запросе к API') from error
 
 
 def check_response(response):
     """Проверяет ответ API на соответствие ожидаемой структуре."""
     if not isinstance(response, dict):
-        logger.error('Ответ API не является словарем')
-        return False
+        raise TypeError('Ответ API не является словарем')
 
-    missing_keys = []
-    for key in ('homeworks',):
-        if key not in response:
-            missing_keys.append(key)
-
-    if missing_keys:
-        logger.error(
-            'Нет ожидаемых ключей в ответе API: '
-            f'{", ".join(missing_keys)}'
-        )
-        return False
+    if 'homeworks' not in response:
+        raise KeyError('В ответе API отсутствует ключ homeworks')
 
     if not isinstance(response['homeworks'], list):
-        logger.error('Ключ homeworks не является списком')
-        return False
-
-    return True
+        raise TypeError('Ключ homeworks не является списком')
 
 
 def parse_status(homework):
     """Извлекает статус домашней работы и формирует сообщение."""
-    if not isinstance(homework, dict):
-        logger.error('Объект не является словарем')
-        return 'Некорректные данные о домашней работе'
+    homework_name = homework.get('homework_name')
+    if homework_name is None:
+        raise KeyError('В ответе API отсутствует ключ homework_name')
 
     homework_status = homework.get('status')
     if homework_status is None:
-        logger.error(f'Нет статуса: {homework_status}')
-        return 'Статус не найден'
+        raise ValueError('В ответе API отсутствует ключ status')
 
-    if homework_status in HOMEWORK_VERDICTS:
-        homework_name = homework.get('homework_name', 'Домашняя работа')
-        verdict = HOMEWORK_VERDICTS[homework_status]
-        return (
-            f'Изменился статус проверки работы "{homework_name}". '
-            f'{verdict}'
-        )
-    else:
-        logger.critical(
-            f'Неожиданный статус домашней работы: {homework_status}'
-        )
-        return f'Ошибка: неизвестный статус работы — {homework_status}'
+    if homework_status not in HOMEWORK_VERDICTS:
+        raise ValueError(f'Неизвестный статус: {homework_status}')
+
+    verdict = HOMEWORK_VERDICTS[homework_status]
+    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def main():
     """Основная логика работы бота."""
     if not check_tokens():
-        return
+        sys.exit('Отсутствуют переменные окружения')
 
-    # Создаем сессию для бота
     vk_session = vk_api.VkApi(token=VK_TOKEN)
     vk = vk_session.get_api()
+
     timestamp = int(time.time())
 
     while True:
         try:
             response = get_api_answer(timestamp)
-            if response is None:
-                logger.warning(
-                    'Ответ от API отсутствует, '
-                    'повтор через RETRY_PERIOD'
-                )
+            check_response(response)
 
-            elif not check_response(response):
-                logger.warning('Некорректный формат ответа API')
-
+            homeworks = response.get('homeworks', [])
+            if not homeworks:
+                logger.debug('Новых статусов нет')
             else:
-                homeworks = response.get('homeworks', [])
+                for homework in homeworks:
+                    message = parse_status(homework)
+                    send_message(vk, message)
 
-                if not homeworks:
-                    logger.debug('Новых статусов нет')
-                else:
-                    for homework in homeworks:
-                        message = parse_status(homework)
-                        send_message(vk, message)
-                timestamp = int(time.time())
+            timestamp = int(time.time())
 
         except Exception as error:
-            logger.critical(f'Критический сбой в main: {error}')
+            logger.error(f'Сбой в работе программы: {error}')
 
         time.sleep(RETRY_PERIOD)
-
-
-if __name__ == '__main__':
-    main()
