@@ -7,6 +7,10 @@ import time
 import requests
 import vk_api
 from dotenv import load_dotenv
+from exceptions import ApiConnectionError, ApiResponseError
+from http import HTTPStatus
+
+HTTPStatus.OK
 
 load_dotenv()
 
@@ -16,11 +20,9 @@ VK_USER_ID = os.getenv('VK_USER_ID')
 
 RETRY_PERIOD = 600
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
-
 HEADERS = {
     'Authorization': f'OAuth {PRACTICUM_TOKEN}'
 }
-
 HOMEWORK_VERDICTS = {
     'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
     'reviewing': 'Работа взята на проверку ревьюером.',
@@ -29,6 +31,7 @@ HOMEWORK_VERDICTS = {
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
 handler = logging.StreamHandler(sys.stdout)
 formatter = logging.Formatter(
     '%(asctime)s [%(levelname)s] %(message)s'
@@ -39,19 +42,17 @@ logger.addHandler(handler)
 
 def check_tokens():
     """Проверяет доступность обязательных переменных окружения."""
-    if (
-        VK_TOKEN is not None
-        and PRACTICUM_TOKEN is not None
-        and PRACTICUM_TOKEN.strip()
-        and VK_USER_ID is not None
-    ):
-        return True
-    else:
-        logger.critical(
-            'Отсутствие обязательных переменных окружения '
-            'во время запуска бота'
-        )
-        return False
+    missing_keys = []
+    tockens = {
+        'PRACTICUM_TOKEN': PRACTICUM_TOKEN,
+        'VK_TOKEN': VK_TOKEN,
+        'VK_USER_ID': VK_USER_ID
+    }
+
+    for key, value in tockens.items():
+        if not value or not str(value).strip():
+            missing_keys.append(key)
+    return missing_keys
 
 
 def send_message(vk, message):
@@ -64,12 +65,13 @@ def send_message(vk, message):
         )
         logger.debug('Удачная отправка сообщения в VK')
     except Exception as error:
-        logger.error(f'Сбой при отправке сообщения: {error}')
+        logger.error('Сбой при отправке сообщения: %s', error)
 
 
 def get_api_answer(timestamp):
     """Запрашивает статусы домашних работ у API Практикум Домашка."""
     params = {'from_date': timestamp}
+
     try:
         response = requests.get(
             ENDPOINT,
@@ -77,15 +79,14 @@ def get_api_answer(timestamp):
             params=params,
             timeout=5
         )
-        if response.status_code != 200:
-            raise requests.exceptions.HTTPError(
+        if response.status_code != HTTPStatus.OK:
+            raise ApiResponseError(
                 f'Эндпоинт {ENDPOINT} недоступен. '
                 f'Код ответа: {response.status_code}'
             )
         return response.json()
     except requests.exceptions.RequestException as error:
-        logger.error(f'Сбой при запросе к API: {error}')
-        raise ConnectionError('Ошибка при запросе к API') from error
+        raise ApiConnectionError('Сбой соединения с API') from error
 
 
 def check_response(response):
@@ -114,13 +115,20 @@ def parse_status(homework):
         raise ValueError(f'Неизвестный статус: {homework_status}')
 
     verdict = HOMEWORK_VERDICTS[homework_status]
-    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
+    return (
+        f'Изменился статус проверки работы "{homework_name}". {verdict}'
+    )
 
 
 def main():
     """Основная логика работы бота."""
-    if not check_tokens():
-        sys.exit('Отсутствуют переменные окружения')
+    missing = check_tokens()
+    if missing:
+        logger.critical(
+            'Нет обязательных переменных окружения: %s при запуске бота',
+            ', '.join(missing)
+        )
+        raise RuntimeError('Критическая ошибка: не заданы токены')
 
     vk_session = vk_api.VkApi(token=VK_TOKEN)
     vk = vk_session.get_api()
@@ -142,8 +150,14 @@ def main():
 
             timestamp = int(time.time())
 
+        except ApiResponseError as error:
+            logger.error('Ошибка ответа API: %s', error)
+
+        except ApiConnectionError as error:
+            logger.error('Сбой при подключении к API: %s', error)
+
         except Exception as error:
-            logger.error(f'Сбой в работе программы: {error}')
+            logger.error('Сбой в работе программы: %s', error)
 
         time.sleep(RETRY_PERIOD)
 
