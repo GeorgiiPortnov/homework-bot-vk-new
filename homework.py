@@ -7,7 +7,7 @@ import time
 import requests
 import vk_api
 from dotenv import load_dotenv
-from exceptions import ApiConnectionError, ApiResponseError
+from exceptions import ApiConnectionError, ApiResponseError, ConfigError
 from http import HTTPStatus
 
 HTTPStatus.OK
@@ -122,13 +122,12 @@ def parse_status(homework):
 
 def main():
     """Основная логика работы бота."""
-    missing = check_tokens()
-    if missing:
+    if missing := check_tokens():
         logger.critical(
             'Нет обязательных переменных окружения: %s при запуске бота',
             ', '.join(missing)
         )
-        raise RuntimeError('Критическая ошибка: не заданы токены')
+        raise ConfigError('Критическая ошибка: не заданы токены')
 
     vk_session = vk_api.VkApi(token=VK_TOKEN)
     vk = vk_session.get_api()

@@ -3,3 +3,6 @@ class ApiConnectionError(Exception):
 
 class ApiResponseError(Exception):
     """Некорректный ответ от API Практикум Домашка."""
+
+class ConfigError(Exception):
+    """Критическая ошибка конфигурации: отсутствуют токены"""
